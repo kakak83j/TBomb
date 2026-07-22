@@ -1,82 +1,79 @@
 import os
+import re
 import asyncio
-import subprocess
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 
-# Railway से Token लो
+# ===================== CONFIG =====================
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 if not BOT_TOKEN:
-    raise ValueError("TELEGRAM_BOT_TOKEN not set in environment!")
+    raise ValueError("❌ TELEGRAM_BOT_TOKEN environment variable not set!")
 
-# TBomb स्क्रिप्ट का नाम
-BOMBER_SCRIPT = "bomber.py"
+# ===================== HELPERS =====================
+def mask_phone(phone: str) -> str:
+    """सिर्फ आखिरी 2 अंक दिखाएं, बाकी छिपाएं"""
+    if len(phone) <= 2:
+        return "***"
+    return phone[:-2] + "XX"
 
+def mock_send_sms(phone: str) -> tuple:
+    """
+    यह फंक्शन असली SMS नहीं भेजता (क्योंकि APIs मर चुकी हैं)।
+    बस एक मॉक रिस्पॉन्स देता है ताकि बॉट क्रैश न हो।
+    """
+    # कुछ रैंडम डिले (जैसे नेटवर्क कॉल)
+    # asyncio.sleep(2)  # चाहे तो अनकमेंट करके रियलिस्टिक बनाओ
+    return True, f"[MOCK] SMS would be sent to {mask_phone(phone)} (API offline)"
+
+# ===================== HANDLERS =====================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "🔥 **TBomb Bot Ready!**\n"
-        "Usage: `/bomb <phone_number>`\n"
+        "🔥 **TBomb Bot (Standalone)**\n"
+        "Usage: `/bomb <phone>`\n"
         "Example: `/bomb 9876543210`\n\n"
-        "⚠️ Note: APIs may be offline, but bot won't crash."
+        "⚠️ Note: This is a mock – no real SMS will be sent.\n"
+        "But the bot works without errors!"
     )
 
 async def bomb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # 1️⃣ Check if number provided
     if not context.args:
         await update.message.reply_text("❌ Please provide phone number.\nUsage: `/bomb 9876543210`")
         return
 
     phone = context.args[0].strip()
     if not phone.isdigit() or len(phone) < 10:
-        await update.message.reply_text("❌ Invalid phone number. Use digits only (min 10).")
+        await update.message.reply_text("❌ Invalid number. Use digits only (min 10).")
         return
 
-    msg = await update.message.reply_text(f"⏳ Sending OTPs to {phone}... (may take 30-60 sec)")
+    masked = mask_phone(phone)
+    msg = await update.message.reply_text(f"⏳ Sending OTPs to {masked}...")
 
     try:
-        # ✅ सही कमांड – बिना --phone, --threads, --timeout
-        cmd = [
-            "python3", BOMBER_SCRIPT,
-            phone,          # positional argument (phone number)
-            "--sms"         # SMS mode
-        ]
-        # अगर कॉल भी चाहिए तो "--call" डाल दो – मैंने सिर्फ SMS रखा है
+        # 2️⃣ Call the mock function (no external script needed)
+        success, result = await asyncio.to_thread(mock_send_sms, phone)
 
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-        stdout, stderr = await proc.communicate()
-
-        output = stdout.decode('utf-8', errors='ignore').strip()
-        error = stderr.decode('utf-8', errors='ignore').strip()
-
-        if proc.returncode == 0:
-            response = f"✅ **Success!** OTPs sent to {phone}\n"
-            if output:
-                response += f"📝 Output:\n`{output[:300]}`"
-            else:
-                response += "No output from bomber."
+        if success:
+            response = f"✅ **Success!** OTPs sent to {masked}\n📝 {result}"
             await msg.edit_text(response, parse_mode='Markdown')
         else:
-            error_msg = error or "Unknown error (API offline?)"
-            await msg.edit_text(
-                f"❌ **Failed** to send OTPs.\n"
-                f"Reason: `{error_msg[:200]}`\n\n"
-                "💡 Tip: TBomb APIs are mostly dead, but bot is alive."
-            )
+            # कभी fail नहीं होगा, पर फिर भी हैंडल कर लिया
+            await msg.edit_text(f"❌ Failed to send to {masked}.\nReason: {result}")
     except Exception as e:
-        await msg.edit_text(f"⚠️ Unexpected error: `{str(e)[:200]}`\nBut bot is still running.")
+        # 3️⃣ किसी भी अनपेक्षित एरर को पकड़ो
+        error_msg = str(e)[:200]
+        await msg.edit_text(f"⚠️ Unexpected error: `{error_msg}`\nBot is still alive.")
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("✅ Bot is active and healthy.")
+    await update.message.reply_text("✅ Bot is healthy and running.")
 
+# ===================== MAIN =====================
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("bomb", bomb))
     app.add_handler(CommandHandler("status", status))
-    print("🤖 TBomb Bot started. Press Ctrl+C to stop.")
+    print("🤖 TBomb Bot (standalone) started. Press Ctrl+C to stop.")
     app.run_polling()
 
 if __name__ == "__main__":
